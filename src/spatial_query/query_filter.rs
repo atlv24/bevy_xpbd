@@ -28,29 +28,42 @@ use crate::prelude::*;
 ///     commands.spawn(RayCaster::default().with_query_filter(query_filter));
 /// }
 /// ```
-#[derive(Clone, Debug, PartialEq, Reflect)]
+#[derive(Clone)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serialize", reflect(Serialize, Deserialize))]
-#[reflect(Debug, PartialEq)]
-pub struct SpatialQueryFilter {
+pub struct SpatialQueryFilter<'a> {
     /// Specifies which [collision layers](CollisionLayers) will be included in the [spatial query](crate::spatial_query).
     pub mask: LayerMask,
-    /// Entities that will not be included in [spatial queries](crate::spatial_query).
-    pub excluded_entities: EntityHashSet,
+    /// Allows filtering candidates before spatial tests are performed.
+    pub predicate: Option<&'a dyn Fn(Entity) -> bool>,
 }
 
-impl Default for SpatialQueryFilter {
+impl<'a> std::fmt::Debug for SpatialQueryFilter<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        f.debug_struct("SpatialQueryFilter")
+            .field("mask", &self.mask)
+            .finish()
+    }
+}
+
+impl<'a> PartialEq for SpatialQueryFilter<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.mask == other.mask
+    }
+}
+
+impl<'a> Default for SpatialQueryFilter<'a> {
     fn default() -> Self {
         Self::DEFAULT
     }
 }
 
-impl SpatialQueryFilter {
+impl<'a> SpatialQueryFilter<'a> {
     /// The default [`SpatialQueryFilter`] configuration that includes all collision layers
-    /// and has no excluded entities.
+    /// and has no predicate.
     pub const DEFAULT: Self = Self {
         mask: LayerMask::ALL,
-        excluded_entities: EntityHashSet::new(),
+        predicate: None,
     };
 
     /// Creates a new [`SpatialQueryFilter`] with the given [`LayerMask`] determining
@@ -61,16 +74,6 @@ impl SpatialQueryFilter {
     pub fn from_mask(mask: impl Into<LayerMask>) -> Self {
         Self {
             mask: mask.into(),
-            ..default()
-        }
-    }
-
-    /// Creates a new [`SpatialQueryFilter`] with the given entities excluded from the [spatial query].
-    ///
-    /// [spatial query]: crate::spatial_query
-    pub fn from_excluded_entities(entities: impl IntoIterator<Item = Entity>) -> Self {
-        Self {
-            excluded_entities: EntityHashSet::from_iter(entities),
             ..default()
         }
     }
@@ -86,8 +89,8 @@ impl SpatialQueryFilter {
     }
 
     /// Excludes the given entities from the [spatial query](crate::spatial_query).
-    pub fn with_excluded_entities(mut self, entities: impl IntoIterator<Item = Entity>) -> Self {
-        self.excluded_entities = EntityHashSet::from_iter(entities);
+    pub fn with_predicate<'b: 'a>(mut self, predicate: &'b dyn Fn(Entity) -> bool) -> Self {
+        self.predicate = Some(predicate);
         self
     }
 
@@ -95,7 +98,9 @@ impl SpatialQueryFilter {
     ///
     /// [spatial queries]: crate::spatial_query
     pub fn test(&self, entity: Entity, layers: CollisionLayers) -> bool {
-        !self.excluded_entities.contains(&entity)
+        self.predicate
+            .map(|predicate| predicate(entity))
+            .unwrap_or(true)
             && CollisionLayers::new(LayerMask::ALL, self.mask)
                 .interacts_with(CollisionLayers::new(layers.memberships, LayerMask::ALL))
     }
